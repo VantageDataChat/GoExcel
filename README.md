@@ -1,4 +1,6 @@
-# GoSpreadsheet
+> [English](README_en.md) | [中文](README.md)
+
+# GoExcel
 
 纯 Go 电子表格处理库，灵感来自 [PHPOffice/PhpSpreadsheet](https://github.com/PHPOffice/PhpSpreadsheet)。
 
@@ -246,7 +248,7 @@ ws.SetSheetProtection(sp)
 ## 项目结构
 
 ```
-gospreadsheet/
+goexcel/
 ├── spreadsheet.go     # Cell 类型与操作
 ├── workbook.go        # Workbook 工作簿管理
 ├── worksheet.go       # Worksheet 工作表

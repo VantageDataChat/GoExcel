@@ -1,4 +1,6 @@
-# GoSpreadsheet API 文档
+> [English](API_en.md) | [中文](API.md)
+
+# GoExcel API 文档
 
 完整的 API 参考手册，涵盖所有公开类型、函数和方法。
 
