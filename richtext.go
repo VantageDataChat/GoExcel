@@ -1,5 +1,7 @@
 package gospreadsheet
 
+import "strings"
+
 // RichTextRun represents a segment of rich text with its own formatting.
 type RichTextRun struct {
 	Text string
@@ -24,9 +26,9 @@ func (rt *RichText) AddRun(text string, font *Font) *RichText {
 
 // PlainText returns the concatenated plain text of all runs.
 func (rt *RichText) PlainText() string {
-	result := ""
+	var b strings.Builder
 	for _, run := range rt.Runs {
-		result += run.Text
+		b.WriteString(run.Text)
 	}
-	return result
+	return b.String()
 }

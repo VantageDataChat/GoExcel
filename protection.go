@@ -1,9 +1,10 @@
 package gospreadsheet
 
 import (
-	"crypto/sha512"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
-	"math/rand"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // SheetProtection represents protection settings for a worksheet.
@@ -72,16 +73,16 @@ func (sp *SheetProtection) AllowAutoFilter() *SheetProtection {
 	return sp
 }
 
-// hashPassword creates a simple hash of the password for XLSX protection.
+// hashPassword creates a salted, iterated hash of the password for XLSX protection.
+// Uses PBKDF2 with SHA-256 and 100,000 iterations per OWASP recommendations.
 func hashPassword(password string) string {
 	salt := make([]byte, 16)
-	for i := range salt {
-		salt[i] = byte(rand.Intn(256))
+	if _, err := rand.Read(salt); err != nil {
+		panic("crypto/rand failed: " + err.Error())
 	}
-	h := sha512.New()
-	h.Write(salt)
-	h.Write([]byte(password))
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+	dk := pbkdf2.Key([]byte(password), salt, 100000, 32, sha256.New)
+	// Encode as "salt:hash" so we can verify later
+	return base64.StdEncoding.EncodeToString(salt) + ":" + base64.StdEncoding.EncodeToString(dk)
 }
 
 // WorkbookProtection represents protection settings for the workbook.

@@ -54,23 +54,33 @@ func ParseCellReference(ref string) (*CellReference, error) {
 		return nil, errors.New("cell reference cannot be empty")
 	}
 
-	// Split into column letters and row number
-	colPart := ""
-	rowPart := ""
-	for _, ch := range ref {
-		if unicode.IsLetter(ch) {
-			if rowPart != "" {
-				return nil, fmt.Errorf("invalid cell reference: %s", ref)
-			}
-			colPart += string(ch)
-		} else if unicode.IsDigit(ch) {
-			rowPart += string(ch)
-		} else {
+	// Split into column letters and row number using index tracking
+	splitIdx := -1
+	for i, ch := range ref {
+		if unicode.IsDigit(ch) {
+			splitIdx = i
+			break
+		}
+		if !unicode.IsLetter(ch) {
 			return nil, fmt.Errorf("invalid character in cell reference: %c", ch)
 		}
 	}
 
-	if colPart == "" || rowPart == "" {
+	if splitIdx <= 0 {
+		return nil, fmt.Errorf("invalid cell reference: %s", ref)
+	}
+
+	colPart := ref[:splitIdx]
+	rowPart := ref[splitIdx:]
+
+	// Validate row part contains only digits
+	for _, ch := range rowPart {
+		if !unicode.IsDigit(ch) {
+			return nil, fmt.Errorf("invalid cell reference: %s", ref)
+		}
+	}
+
+	if rowPart == "" {
 		return nil, fmt.Errorf("invalid cell reference: %s", ref)
 	}
 

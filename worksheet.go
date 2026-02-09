@@ -2,8 +2,8 @@ package gospreadsheet
 
 import (
 	"errors"
-	"fmt"
 	"sort"
+	"strconv"
 )
 
 // MergeCell represents a merged cell range.
@@ -54,7 +54,7 @@ func (ws *Worksheet) SetTitle(title string) *Worksheet {
 }
 
 func cellKey(row, col int) string {
-	return fmt.Sprintf("%d,%d", row, col)
+	return strconv.Itoa(row) + "," + strconv.Itoa(col)
 }
 
 // GetCell returns the cell at the given 0-based row and column.
@@ -67,6 +67,13 @@ func (ws *Worksheet) GetCell(row, col int) *Cell {
 	c := NewCell(row, col)
 	ws.cells[key] = c
 	return c
+}
+
+// GetCellIfExists returns the cell at the given 0-based row and column,
+// or nil if the cell doesn't exist. Does not create new cells.
+func (ws *Worksheet) GetCellIfExists(row, col int) *Cell {
+	key := cellKey(row, col)
+	return ws.cells[key]
 }
 
 // GetCellByName returns the cell at the given reference (e.g., "A1").
@@ -526,7 +533,31 @@ func (ws *Worksheet) CopyRow(srcRow, dstRow int) {
 			dstCell.Value = srcCell.Value
 			dstCell.Type = srcCell.Type
 			dstCell.Formula = srcCell.Formula
-			dstCell.Style = srcCell.Style
+			// Deep copy style to avoid shared mutable state
+			if srcCell.Style != nil {
+				styleCopy := *srcCell.Style
+				if srcCell.Style.Font != nil {
+					fontCopy := *srcCell.Style.Font
+					styleCopy.Font = &fontCopy
+				}
+				if srcCell.Style.Fill != nil {
+					fillCopy := *srcCell.Style.Fill
+					styleCopy.Fill = &fillCopy
+				}
+				if srcCell.Style.Borders != nil {
+					bordersCopy := *srcCell.Style.Borders
+					styleCopy.Borders = &bordersCopy
+				}
+				if srcCell.Style.Alignment != nil {
+					alignCopy := *srcCell.Style.Alignment
+					styleCopy.Alignment = &alignCopy
+				}
+				if srcCell.Style.NumberFormat != nil {
+					nfCopy := *srcCell.Style.NumberFormat
+					styleCopy.NumberFormat = &nfCopy
+				}
+				dstCell.Style = &styleCopy
+			}
 		}
 	}
 }

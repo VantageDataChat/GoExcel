@@ -24,8 +24,17 @@ func (w *XLSXWriter) Save(wb *Workbook, filename string) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer f.Close()
-	return w.Write(wb, f)
+
+	writeErr := w.Write(wb, f)
+	closeErr := f.Close()
+
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing file: %w", closeErr)
+	}
+	return nil
 }
 
 // Write writes the workbook to an io.Writer.
@@ -188,7 +197,9 @@ func (w *XLSXWriter) writeStyles(zw *zip.Writer, wb *Workbook) error {
 	if err != nil {
 		return err
 	}
-	// Minimal styles with default font
+	// TODO: Serialize user-defined styles (Font, Fill, Borders, Alignment, NumberFormat)
+	// from cell Style objects. Currently only writes minimal defaults, so custom
+	// styling set via SetStyle() is lost on save.
 	styles := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"
 	styles += `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
 	styles += `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>`
@@ -223,27 +234,28 @@ func (w *XLSXWriter) writeSheet(zw *zip.Writer, ws *Worksheet, sheetNum int, ss 
 		return err
 	}
 
-	sheetXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"
-	sheetXML += `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n")
+	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`)
 
 	// Freeze pane
 	if ws.frozen != nil {
-		sheetXML += `<sheetViews><sheetView tabSelected="1" workbookViewId="0">`
-		sheetXML += fmt.Sprintf(`<pane xSplit="%d" ySplit="%d" topLeftCell="%s%d" activePane="bottomRight" state="frozen"/>`,
+		b.WriteString(`<sheetViews><sheetView tabSelected="1" workbookViewId="0">`)
+		fmt.Fprintf(&b, `<pane xSplit="%d" ySplit="%d" topLeftCell="%s%d" activePane="bottomRight" state="frozen"/>`,
 			ws.frozen.ColumnIdx, ws.frozen.Row-1, ws.frozen.Column, ws.frozen.Row)
-		sheetXML += `</sheetView></sheetViews>`
+		b.WriteString(`</sheetView></sheetViews>`)
 	}
 
 	// Column widths
 	if len(ws.colWidths) > 0 {
-		sheetXML += `<cols>`
+		b.WriteString(`<cols>`)
 		for col, width := range ws.colWidths {
-			sheetXML += fmt.Sprintf(`<col min="%d" max="%d" width="%.2f" customWidth="1"/>`, col+1, col+1, width)
+			fmt.Fprintf(&b, `<col min="%d" max="%d" width="%.2f" customWidth="1"/>`, col+1, col+1, width)
 		}
-		sheetXML += `</cols>`
+		b.WriteString(`</cols>`)
 	}
 
-	sheetXML += `<sheetData>`
+	b.WriteString(`<sheetData>`)
 
 	cells := ws.AllCells()
 	if len(cells) > 0 {
@@ -251,14 +263,14 @@ func (w *XLSXWriter) writeSheet(zw *zip.Writer, ws *Worksheet, sheetNum int, ss 
 		for _, c := range cells {
 			if c.row != currentRow {
 				if currentRow >= 0 {
-					sheetXML += `</row>`
+					b.WriteString(`</row>`)
 				}
 				currentRow = c.row
-				rowHeight := ""
 				if h, ok := ws.rowHeights[c.row]; ok {
-					rowHeight = fmt.Sprintf(` ht="%.2f" customHeight="1"`, h)
+					fmt.Fprintf(&b, `<row r="%d" ht="%.2f" customHeight="1">`, c.row+1, h)
+				} else {
+					fmt.Fprintf(&b, `<row r="%d">`, c.row+1)
 				}
-				sheetXML += fmt.Sprintf(`<row r="%d"%s>`, c.row+1, rowHeight)
 			}
 
 			cellName, _ := CellName(c.row, c.col)
@@ -266,11 +278,11 @@ func (w *XLSXWriter) writeSheet(zw *zip.Writer, ws *Worksheet, sheetNum int, ss 
 			case CellTypeString:
 				if s, ok := c.Value.(string); ok {
 					idx := ss.GetIndex(s)
-					sheetXML += fmt.Sprintf(`<c r="%s" t="s"><v>%d</v></c>`, cellName, idx)
+					fmt.Fprintf(&b, `<c r="%s" t="s"><v>%d</v></c>`, cellName, idx)
 				}
 			case CellTypeNumeric:
 				if v, ok := c.Value.(float64); ok {
-					sheetXML += fmt.Sprintf(`<c r="%s"><v>%g</v></c>`, cellName, v)
+					fmt.Fprintf(&b, `<c r="%s"><v>%g</v></c>`, cellName, v)
 				}
 			case CellTypeBool:
 				if v, ok := c.Value.(bool); ok {
@@ -278,37 +290,37 @@ func (w *XLSXWriter) writeSheet(zw *zip.Writer, ws *Worksheet, sheetNum int, ss 
 					if v {
 						boolVal = 1
 					}
-					sheetXML += fmt.Sprintf(`<c r="%s" t="b"><v>%d</v></c>`, cellName, boolVal)
+					fmt.Fprintf(&b, `<c r="%s" t="b"><v>%d</v></c>`, cellName, boolVal)
 				}
 			case CellTypeFormula:
-				sheetXML += fmt.Sprintf(`<c r="%s"><f>%s</f></c>`, cellName, xmlEscape(c.Formula))
+				fmt.Fprintf(&b, `<c r="%s"><f>%s</f></c>`, cellName, xmlEscape(c.Formula))
 			case CellTypeDate:
 				if t, ok := c.Value.(time.Time); ok {
 					serial := dateToSerial(t)
-					sheetXML += fmt.Sprintf(`<c r="%s"><v>%g</v></c>`, cellName, serial)
+					fmt.Fprintf(&b, `<c r="%s"><v>%g</v></c>`, cellName, serial)
 				}
 			}
 		}
 		if currentRow >= 0 {
-			sheetXML += `</row>`
+			b.WriteString(`</row>`)
 		}
 	}
 
-	sheetXML += `</sheetData>`
+	b.WriteString(`</sheetData>`)
 
 	// Merge cells
 	if len(ws.mergeCells) > 0 {
-		sheetXML += fmt.Sprintf(`<mergeCells count="%d">`, len(ws.mergeCells))
+		fmt.Fprintf(&b, `<mergeCells count="%d">`, len(ws.mergeCells))
 		for _, mc := range ws.mergeCells {
 			startName, _ := CellName(mc.StartRow, mc.StartCol)
 			endName, _ := CellName(mc.EndRow, mc.EndCol)
-			sheetXML += fmt.Sprintf(`<mergeCell ref="%s:%s"/>`, startName, endName)
+			fmt.Fprintf(&b, `<mergeCell ref="%s:%s"/>`, startName, endName)
 		}
-		sheetXML += `</mergeCells>`
+		b.WriteString(`</mergeCells>`)
 	}
 
-	sheetXML += `</worksheet>`
-	_, err = f.Write([]byte(sheetXML))
+	b.WriteString(`</worksheet>`)
+	_, err = f.Write([]byte(b.String()))
 	return err
 }
 

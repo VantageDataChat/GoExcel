@@ -10,35 +10,41 @@ import (
 
 type formulaFunc func(ce *CalculationEngine, ws *Worksheet, args string) (interface{}, error)
 
+// builtinFunctions is the cached map of builtin functions, initialized lazily.
+var builtinFunctions map[string]formulaFunc
+
 // getBuiltinFunctions returns the map of builtin functions.
-// Defined as a function to avoid initialization cycle.
+// Uses lazy initialization to avoid initialization cycle.
 func getBuiltinFunctions() map[string]formulaFunc {
-	return map[string]formulaFunc{
-		"SUM":        fnSum,
-		"AVERAGE":    fnAverage,
-		"COUNT":      fnCount,
-		"COUNTA":     fnCountA,
-		"MAX":        fnMax,
-		"MIN":        fnMin,
-		"IF":         fnIf,
-		"ABS":        fnAbs,
-		"ROUND":      fnRound,
-		"SQRT":       fnSqrt,
-		"POWER":      fnPower,
-		"MOD":        fnMod,
-		"INT":        fnInt,
-		"LEN":        fnLen,
-		"UPPER":      fnUpper,
-		"LOWER":      fnLower,
-		"TRIM":       fnTrim,
-		"LEFT":       fnLeft,
-		"RIGHT":      fnRight,
-		"MID":        fnMid,
-		"CONCATENATE": fnConcatenate,
-		"MEDIAN":     fnMedian,
-		"SUMIF":      fnSumIf,
-		"COUNTIF":    fnCountIf,
+	if builtinFunctions == nil {
+		builtinFunctions = map[string]formulaFunc{
+			"SUM":        fnSum,
+			"AVERAGE":    fnAverage,
+			"COUNT":      fnCount,
+			"COUNTA":     fnCountA,
+			"MAX":        fnMax,
+			"MIN":        fnMin,
+			"IF":         fnIf,
+			"ABS":        fnAbs,
+			"ROUND":      fnRound,
+			"SQRT":       fnSqrt,
+			"POWER":      fnPower,
+			"MOD":        fnMod,
+			"INT":        fnInt,
+			"LEN":        fnLen,
+			"UPPER":      fnUpper,
+			"LOWER":      fnLower,
+			"TRIM":       fnTrim,
+			"LEFT":       fnLeft,
+			"RIGHT":      fnRight,
+			"MID":        fnMid,
+			"CONCATENATE": fnConcatenate,
+			"MEDIAN":     fnMedian,
+			"SUMIF":      fnSumIf,
+			"COUNTIF":    fnCountIf,
+		}
 	}
+	return builtinFunctions
 }
 
 // collectNumericValues resolves args (ranges or single values) into float64 slice.

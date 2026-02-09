@@ -32,7 +32,10 @@ func (ce *CalculationEngine) CalculateCell(ws *Worksheet, ref string) (interface
 // CalculateAll evaluates all formula cells in the workbook.
 func (ce *CalculationEngine) CalculateAll() error {
 	for i := 0; i < ce.workbook.SheetCount(); i++ {
-		ws, _ := ce.workbook.GetSheet(i)
+		ws, err := ce.workbook.GetSheet(i)
+		if err != nil {
+			return fmt.Errorf("accessing sheet %d: %w", i, err)
+		}
 		for _, cell := range ws.AllCells() {
 			if cell.Type == CellTypeFormula {
 				val, err := ce.evaluate(ws, cell.Formula)
@@ -98,29 +101,25 @@ func (ce *CalculationEngine) evaluate(ws *Worksheet, formula string) (interface{
 
 func findOperator(formula string, op string) int {
 	depth := 0
-	// Search from right to left for + and - (lower precedence)
-	// Search from left to right for * and /
-	if op == "+" || op == "-" {
-		for i := len(formula) - 1; i > 0; i-- {
-			ch := formula[i]
-			if ch == ')' {
-				depth++
-			} else if ch == '(' {
-				depth--
-			} else if depth == 0 && string(ch) == op {
-				return i
+	// For correct operator precedence, always search right-to-left.
+	// The caller (evaluate) tries +/- before */÷, so the rightmost
+	// lowest-precedence operator is split first, which is correct.
+	for i := len(formula) - 1; i > 0; i-- {
+		ch := formula[i]
+		if ch == ')' {
+			depth++
+		} else if ch == '(' {
+			depth--
+		} else if depth == 0 && string(ch) == op {
+			// Avoid matching a negative sign right after another operator
+			// e.g. "3*-2" should not split on the '-'
+			if (op == "-" || op == "+") && i > 0 {
+				prev := formula[i-1]
+				if prev == '+' || prev == '-' || prev == '*' || prev == '/' || prev == '(' {
+					continue
+				}
 			}
-		}
-	} else {
-		for i := len(formula) - 1; i > 0; i-- {
-			ch := formula[i]
-			if ch == ')' {
-				depth++
-			} else if ch == '(' {
-				depth--
-			} else if depth == 0 && string(ch) == op {
-				return i
-			}
+			return i
 		}
 	}
 	return -1
@@ -207,7 +206,10 @@ func (ce *CalculationEngine) resolveRange(ws *Worksheet, rangeStr string) ([]int
 	var values []interface{}
 	for row := start.Row - 1; row <= end.Row-1; row++ {
 		for col := start.ColumnIdx; col <= end.ColumnIdx; col++ {
-			cell := ws.GetCell(row, col)
+			cell := ws.GetCellIfExists(row, col)
+			if cell == nil {
+				continue
+			}
 			var val interface{}
 			if cell.Type == CellTypeFormula {
 				val, _ = ce.evaluate(ws, cell.Formula)
@@ -226,23 +228,23 @@ func (ce *CalculationEngine) resolveRange(ws *Worksheet, rangeStr string) ([]int
 func parseArgs(args string) []string {
 	var result []string
 	depth := 0
-	current := ""
+	var current strings.Builder
 	for _, ch := range args {
 		if ch == '(' {
 			depth++
-			current += string(ch)
+			current.WriteRune(ch)
 		} else if ch == ')' {
 			depth--
-			current += string(ch)
+			current.WriteRune(ch)
 		} else if ch == ',' && depth == 0 {
-			result = append(result, strings.TrimSpace(current))
-			current = ""
+			result = append(result, strings.TrimSpace(current.String()))
+			current.Reset()
 		} else {
-			current += string(ch)
+			current.WriteRune(ch)
 		}
 	}
-	if current != "" {
-		result = append(result, strings.TrimSpace(current))
+	if current.Len() > 0 {
+		result = append(result, strings.TrimSpace(current.String()))
 	}
 	return result
 }

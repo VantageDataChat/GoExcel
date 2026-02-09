@@ -86,8 +86,17 @@ func (w *CSVWriter) Save(wb *Workbook, filename string) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer f.Close()
-	return w.Write(wb, f)
+
+	writeErr := w.Write(wb, f)
+	closeErr := f.Close()
+
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing file: %w", closeErr)
+	}
+	return nil
 }
 
 // Write writes the workbook to an io.Writer.
