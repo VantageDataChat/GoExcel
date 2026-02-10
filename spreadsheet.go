@@ -1,8 +1,6 @@
 // Package gospreadsheet provides a pure Go library for reading and writing
 // spreadsheet files, inspired by PHPOffice/PhpSpreadsheet.
 // It supports XLSX and CSV formats with an in-memory spreadsheet model.
-// Version is the semantic version number of the gospreadsheet library.
-const Version = "1.0.0"
 package gospreadsheet
 
 import (
