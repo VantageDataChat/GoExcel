@@ -18,10 +18,11 @@ type DocumentProperties struct {
 
 // Workbook represents a spreadsheet workbook containing one or more worksheets.
 type Workbook struct {
-	worksheets  []*Worksheet
-	activeSheet int
-	Properties  DocumentProperties
-	namedRanges map[string]string // name -> "Sheet1!A1:B2"
+	worksheets         []*Worksheet
+	activeSheet        int
+	Properties         DocumentProperties
+	namedRanges        map[string]string // name -> "Sheet1!A1:B2"
+	workbookProtection *WorkbookProtection
 }
 
 // New creates a new workbook with a single default worksheet.
@@ -148,4 +149,144 @@ func (wb *Workbook) GetNamedRanges() map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// RemoveNamedRange removes a named range by name.
+func (wb *Workbook) RemoveNamedRange(name string) error {
+	if _, ok := wb.namedRanges[name]; !ok {
+		return fmt.Errorf("named range %q not found", name)
+	}
+	delete(wb.namedRanges, name)
+	return nil
+}
+
+// Sheets returns all worksheets.
+func (wb *Workbook) Sheets() []*Worksheet {
+	result := make([]*Worksheet, len(wb.worksheets))
+	copy(result, wb.worksheets)
+	return result
+}
+
+// SetWorkbookProtection sets the workbook protection.
+func (wb *Workbook) SetWorkbookProtection(wp *WorkbookProtection) {
+	wb.workbookProtection = wp
+}
+
+// GetWorkbookProtection returns the workbook protection, or nil if not set.
+func (wb *Workbook) GetWorkbookProtection() *WorkbookProtection {
+	return wb.workbookProtection
+}
+
+// ClearProtection removes all workbook protection.
+func (wb *Workbook) ClearProtection() {
+	wb.workbookProtection = nil
+}
+
+// Validate checks the workbook for common issues.
+func (wb *Workbook) Validate() error {
+	if len(wb.worksheets) == 0 {
+		return errors.New("workbook must contain at least one worksheet")
+	}
+	// Check for duplicate sheet names
+	names := make(map[string]bool)
+	for _, ws := range wb.worksheets {
+		if names[ws.title] {
+			return fmt.Errorf("duplicate worksheet name: %q", ws.title)
+		}
+		names[ws.title] = true
+		if err := ws.Validate(); err != nil {
+			return fmt.Errorf("worksheet %q: %w", ws.title, err)
+		}
+	}
+	return nil
+}
+
+// Close is a no-op for in-memory workbooks but provided for API compatibility.
+// It can be used to signal that the workbook is no longer needed.
+func (wb *Workbook) Close() error {
+	return nil
+}
+
+// CopySheet copies a worksheet to a new sheet with the given name.
+func (wb *Workbook) CopySheet(srcIndex int, newTitle string) (*Worksheet, error) {
+	src, err := wb.GetSheet(srcIndex)
+	if err != nil {
+		return nil, err
+	}
+	dst, err := wb.AddSheet(newTitle)
+	if err != nil {
+		return nil, err
+	}
+	// Copy cells
+	for key, cell := range src.cells {
+		newCell := &Cell{
+			Value:   cell.Value,
+			Type:    cell.Type,
+			Formula: cell.Formula,
+			row:     cell.row,
+			col:     cell.col,
+		}
+		if cell.Style != nil {
+			styleCopy := *cell.Style
+			newCell.Style = &styleCopy
+		}
+		if cell.Hyperlink != nil {
+			hlCopy := *cell.Hyperlink
+			newCell.Hyperlink = &hlCopy
+		}
+		if cell.Comment != nil {
+			cmCopy := *cell.Comment
+			newCell.Comment = &cmCopy
+		}
+		dst.cells[key] = newCell
+	}
+	// Copy merge cells
+	dst.mergeCells = make([]MergeCell, len(src.mergeCells))
+	copy(dst.mergeCells, src.mergeCells)
+	// Copy dimensions
+	for k, v := range src.colWidths {
+		dst.colWidths[k] = v
+	}
+	for k, v := range src.rowHeights {
+		dst.rowHeights[k] = v
+	}
+	for k, v := range src.hiddenRows {
+		dst.hiddenRows[k] = v
+	}
+	for k, v := range src.hiddenCols {
+		dst.hiddenCols[k] = v
+	}
+	// Copy frozen pane
+	if src.frozen != nil {
+		frozenCopy := *src.frozen
+		dst.frozen = &frozenCopy
+	}
+	dst.tabColor = src.tabColor
+	return dst, nil
+}
+
+// MoveSheet moves a worksheet from one index to another.
+func (wb *Workbook) MoveSheet(fromIndex, toIndex int) error {
+	if fromIndex < 0 || fromIndex >= len(wb.worksheets) {
+		return fmt.Errorf("source index %d out of range", fromIndex)
+	}
+	if toIndex < 0 || toIndex >= len(wb.worksheets) {
+		return fmt.Errorf("destination index %d out of range", toIndex)
+	}
+	if fromIndex == toIndex {
+		return nil
+	}
+	ws := wb.worksheets[fromIndex]
+	// Remove from old position
+	wb.worksheets = append(wb.worksheets[:fromIndex], wb.worksheets[fromIndex+1:]...)
+	// Insert at new position
+	rear := make([]*Worksheet, len(wb.worksheets[toIndex:]))
+	copy(rear, wb.worksheets[toIndex:])
+	wb.worksheets = append(wb.worksheets[:toIndex], ws)
+	wb.worksheets = append(wb.worksheets, rear...)
+	// Re-index
+	for i, w := range wb.worksheets {
+		w.index = i
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package gospreadsheet
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 )
@@ -12,6 +13,23 @@ type MergeCell struct {
 	StartCol int
 	EndRow   int
 	EndCol   int
+}
+
+// SortOrder represents the sort direction.
+type SortOrder int
+
+const (
+	SortOrderAscending  SortOrder = iota
+	SortOrderDescending
+)
+
+// SheetView represents view settings for a worksheet.
+type SheetView struct {
+	ZoomScale    uint   // zoom percentage (10-400), default 100
+	ShowGridlines bool
+	ShowRowColHeaders bool
+	ShowRuler    bool
+	TopLeftCell  string // e.g. "A1"
 }
 
 // Worksheet represents a single worksheet in a spreadsheet.
@@ -30,6 +48,9 @@ type Worksheet struct {
 	pageSetup            *PageSetup
 	sheetProtection      *SheetProtection
 	tabColor             string // hex color for sheet tab
+	hiddenRows           map[int]bool
+	hiddenCols           map[int]bool
+	sheetView            *SheetView
 }
 
 // NewWorksheet creates a new worksheet with the given title.
@@ -39,6 +60,8 @@ func NewWorksheet(title string) *Worksheet {
 		cells:      make(map[string]*Cell),
 		colWidths:  make(map[int]float64),
 		rowHeights: make(map[int]float64),
+		hiddenRows: make(map[int]bool),
+		hiddenCols: make(map[int]bool),
 	}
 }
 
@@ -560,4 +583,218 @@ func (ws *Worksheet) CopyRow(srcRow, dstRow int) {
 			}
 		}
 	}
+}
+
+// RemoveMergedCell removes a merged cell region by its range string (e.g. "A1:C3").
+func (ws *Worksheet) RemoveMergedCell(rangeStr string) error {
+	start, end, err := ParseRange(rangeStr)
+	if err != nil {
+		return err
+	}
+	sr, sc := start.Row-1, start.ColumnIdx
+	er, ec := end.Row-1, end.ColumnIdx
+
+	newMerges := make([]MergeCell, 0, len(ws.mergeCells))
+	found := false
+	for _, mc := range ws.mergeCells {
+		if mc.StartRow == sr && mc.StartCol == sc && mc.EndRow == er && mc.EndCol == ec {
+			found = true
+			continue
+		}
+		newMerges = append(newMerges, mc)
+	}
+	if !found {
+		return fmt.Errorf("merged cell range %q not found", rangeStr)
+	}
+	ws.mergeCells = newMerges
+	return nil
+}
+
+// SetRowHidden sets the visibility of a row (0-based index).
+func (ws *Worksheet) SetRowHidden(row int, hidden bool) *Worksheet {
+	ws.hiddenRows[row] = hidden
+	return ws
+}
+
+// IsRowHidden returns whether a row is hidden.
+func (ws *Worksheet) IsRowHidden(row int) bool {
+	return ws.hiddenRows[row]
+}
+
+// SetColumnHidden sets the visibility of a column (0-based index).
+func (ws *Worksheet) SetColumnHidden(col int, hidden bool) *Worksheet {
+	ws.hiddenCols[col] = hidden
+	return ws
+}
+
+// IsColumnHidden returns whether a column is hidden.
+func (ws *Worksheet) IsColumnHidden(col int) bool {
+	return ws.hiddenCols[col]
+}
+
+// SetSheetView sets the sheet view configuration.
+func (ws *Worksheet) SetSheetView(sv *SheetView) *Worksheet {
+	ws.sheetView = sv
+	return ws
+}
+
+// GetSheetView returns the sheet view, creating a default one if not set.
+func (ws *Worksheet) GetSheetView() *SheetView {
+	if ws.sheetView == nil {
+		ws.sheetView = &SheetView{
+			ZoomScale:         100,
+			ShowGridlines:     true,
+			ShowRowColHeaders: true,
+		}
+	}
+	return ws.sheetView
+}
+
+// Sort sorts the rows in the worksheet by the values in the given column.
+// column is a column letter (e.g. "A", "B"), firstRow is 0-based index of the first data row
+// (allows skipping header rows), and order specifies ascending or descending.
+func (ws *Worksheet) Sort(column string, firstRow int, order SortOrder) error {
+	colIdx, err := ColumnNameToIndex(column)
+	if err != nil {
+		return err
+	}
+
+	_, _, maxRow, _, dimErr := ws.Dimensions()
+	if dimErr != nil {
+		return dimErr
+	}
+
+	// Collect rows to sort
+	type rowData struct {
+		rowIdx int
+		cells  map[int]*Cell // col -> cell
+	}
+	var rows []rowData
+	for r := firstRow; r <= maxRow; r++ {
+		rd := rowData{rowIdx: r, cells: make(map[int]*Cell)}
+		for key, cell := range ws.cells {
+			if cell.row == r {
+				rd.cells[cell.col] = cell
+				_ = key
+			}
+		}
+		if len(rd.cells) > 0 {
+			rows = append(rows, rd)
+		}
+	}
+
+	// Sort rows by the specified column
+	sort.SliceStable(rows, func(i, j int) bool {
+		ci := rows[i].cells[colIdx]
+		cj := rows[j].cells[colIdx]
+		vi := sortValue(ci)
+		vj := sortValue(cj)
+		if order == SortOrderDescending {
+			return vi > vj
+		}
+		return vi < vj
+	})
+
+	// Remove old cells for sorted rows
+	for r := firstRow; r <= maxRow; r++ {
+		for key, cell := range ws.cells {
+			if cell.row == r {
+				delete(ws.cells, key)
+			}
+		}
+	}
+
+	// Re-insert cells at new row positions
+	for newIdx, rd := range rows {
+		newRow := firstRow + newIdx
+		for col, cell := range rd.cells {
+			cell.row = newRow
+			ws.cells[cellKey(newRow, col)] = cell
+		}
+	}
+
+	return nil
+}
+
+// sortValue returns a comparable string for sorting.
+func sortValue(c *Cell) string {
+	if c == nil {
+		return ""
+	}
+	switch c.Type {
+	case CellTypeNumeric:
+		if v, ok := c.Value.(float64); ok {
+			// Pad with zeros for proper string comparison of numbers
+			return fmt.Sprintf("%020.6f", v)
+		}
+	case CellTypeBool:
+		if v, ok := c.Value.(bool); ok {
+			if v {
+				return "1"
+			}
+			return "0"
+		}
+	}
+	return c.GetStringValue()
+}
+
+// SetBorderRange applies a border style to all cells in a range (e.g. "A1:C3").
+// This creates a proper box border where edge cells get the appropriate border sides.
+func (ws *Worksheet) SetBorderRange(rangeStr string, border Border) error {
+	start, end, err := ParseRange(rangeStr)
+	if err != nil {
+		return err
+	}
+	sr, sc := start.Row-1, start.ColumnIdx
+	er, ec := end.Row-1, end.ColumnIdx
+
+	for r := sr; r <= er; r++ {
+		for c := sc; c <= ec; c++ {
+			cell := ws.GetCell(r, c)
+			if cell.Style == nil {
+				cell.Style = NewStyle()
+			}
+			if cell.Style.Borders == nil {
+				cell.Style.Borders = &Borders{}
+			}
+			b := cell.Style.Borders
+			// Top edge
+			if r == sr {
+				b.Top = border
+			}
+			// Bottom edge
+			if r == er {
+				b.Bottom = border
+			}
+			// Left edge
+			if c == sc {
+				b.Left = border
+			}
+			// Right edge
+			if c == ec {
+				b.Right = border
+			}
+		}
+	}
+	return nil
+}
+
+// Validate checks the worksheet for common issues and returns an error if invalid.
+func (ws *Worksheet) Validate() error {
+	if ws.title == "" {
+		return fmt.Errorf("worksheet title cannot be empty")
+	}
+	// Check for overlapping merge cells
+	for i, mc1 := range ws.mergeCells {
+		for j, mc2 := range ws.mergeCells {
+			if i >= j {
+				continue
+			}
+			if mc1.StartRow <= mc2.EndRow && mc1.EndRow >= mc2.StartRow &&
+				mc1.StartCol <= mc2.EndCol && mc1.EndCol >= mc2.StartCol {
+				return fmt.Errorf("overlapping merged cell regions")
+			}
+		}
+	}
+	return nil
 }

@@ -41,10 +41,13 @@ type Border struct {
 
 // Borders represents all four borders of a cell.
 type Borders struct {
-	Left   Border
-	Right  Border
-	Top    Border
-	Bottom Border
+	Left     Border
+	Right    Border
+	Top      Border
+	Bottom   Border
+	Diagonal Border
+	DiagonalUp   bool
+	DiagonalDown bool
 }
 
 // Font represents cell font properties.
@@ -67,11 +70,12 @@ type Fill struct {
 
 // Alignment represents cell text alignment.
 type Alignment struct {
-	Horizontal HorizontalAlignment
-	Vertical   VerticalAlignment
-	WrapText   bool
+	Horizontal   HorizontalAlignment
+	Vertical     VerticalAlignment
+	WrapText     bool
+	ShrinkToFit  bool
 	TextRotation int // degrees, -90 to 90
-	Indent     int
+	Indent       int
 }
 
 // NumberFormat represents a cell number format.

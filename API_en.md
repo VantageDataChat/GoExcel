@@ -67,6 +67,15 @@ type DocumentProperties struct {
 | `AddNamedRange(name, reference string)` | Adds a named range (e.g. `"Sheet1!A1:B2"`) |
 | `GetNamedRange(name string) (string, error)` | Gets a named range reference |
 | `GetNamedRanges() map[string]string` | Gets all named ranges |
+| `RemoveNamedRange(name string) error` | Removes a named range |
+| `Sheets() []*Worksheet` | Returns all worksheets |
+| `CopySheet(srcIndex int, newTitle string) (*Worksheet, error)` | Copies a worksheet |
+| `MoveSheet(fromIndex, toIndex int) error` | Moves a worksheet to a new position |
+| `SetWorkbookProtection(wp *WorkbookProtection)` | Sets workbook protection |
+| `GetWorkbookProtection() *WorkbookProtection` | Gets workbook protection |
+| `ClearProtection()` | Removes all workbook protection |
+| `Validate() error` | Checks workbook for common issues |
+| `Close() error` | Closes the workbook (no-op for in-memory) |
 
 #### Properties
 
@@ -116,6 +125,7 @@ type MergeCell struct {
 |--------|-------------|
 | `MergeCells(rangeStr string) error` | Merges a cell range (e.g. `"A1:C3"`) |
 | `GetMergeCells() []MergeCell` | Gets all merged regions |
+| `RemoveMergedCell(rangeStr string) error` | Removes a merged cell region by range |
 | `FreezePane(ref string) error` | Freezes panes (e.g. `"A2"` freezes the first row) |
 | `GetFreezePane() *CellReference` | Gets the freeze position |
 
@@ -128,6 +138,15 @@ type MergeCell struct {
 | `SetRowHeight(row int, height float64) *Worksheet` | Sets row height (0-based) |
 | `GetRowHeight(row int) float64` | Gets row height (default 15.0) |
 
+#### Row and Column Visibility
+
+| Method | Description |
+|--------|-------------|
+| `SetRowHidden(row int, hidden bool) *Worksheet` | Sets row visibility (0-based) |
+| `IsRowHidden(row int) bool` | Returns whether a row is hidden |
+| `SetColumnHidden(col int, hidden bool) *Worksheet` | Sets column visibility (0-based) |
+| `IsColumnHidden(col int) bool` | Returns whether a column is hidden |
+
 #### Row and Column Operations
 
 | Method | Description |
@@ -139,6 +158,19 @@ type MergeCell struct {
 | `CopyRow(srcRow, dstRow int)` | Copies a row (values, formulas, styles) |
 
 > Row/column operations automatically adjust merged cells and row heights/column widths.
+
+#### Sorting
+
+| Method | Description |
+|--------|-------------|
+| `Sort(column string, firstRow int, order SortOrder) error` | Sorts rows by column values; firstRow is 0-based (skip headers) |
+
+#### SortOrder Constants
+
+| Constant | Value |
+|----------|-------|
+| `SortOrderAscending` | `0` |
+| `SortOrderDescending` | `1` |
 
 #### Iteration and Statistics
 
@@ -155,6 +187,25 @@ type MergeCell struct {
 |--------|-------------|
 | `SetCellHyperlink(ref, url string) error` | Sets a cell hyperlink |
 | `SetCellComment(ref, author, text string) error` | Sets a cell comment |
+
+#### Border Range Helper
+
+| Method | Description |
+|--------|-------------|
+| `SetBorderRange(rangeStr string, border Border) error` | Applies a box border to a cell range |
+
+#### Sheet View
+
+| Method | Description |
+|--------|-------------|
+| `SetSheetView(sv *SheetView) *Worksheet` | Sets sheet view configuration |
+| `GetSheetView() *SheetView` | Gets sheet view (creates default if none) |
+
+#### Validation
+
+| Method | Description |
+|--------|-------------|
+| `Validate() error` | Checks worksheet for common issues |
 
 #### Conditional Formatting / Data Validation / Filter
 
@@ -212,11 +263,24 @@ const (
 |--------|-------------|
 | `SetValue(v interface{}) *Cell` | Sets value with auto type detection (supports string/int/float64/bool/time.Time) |
 | `SetFormula(formula string) *Cell` | Sets a formula |
+| `SetFormulaArray(formula string) *Cell` | Sets an array formula (Ctrl+Shift+Enter) |
 | `SetStyle(s *Style) *Cell` | Sets a style |
+| `SetInlineString(s string) *Cell` | Sets an inline string (not shared) |
+| `SetDateWithStyle(t time.Time) *Cell` | Sets a date with default date format applied |
+| `SetNumberWithFormat(v float64, nf NumberFormat) *Cell` | Sets a number with format applied |
+| `Clear() *Cell` | Resets cell to empty state |
 | `GetStringValue() string` | Gets the string representation |
 | `GetNumericValue() (float64, error)` | Gets the numeric value (returns error for non-numeric types) |
 | `GetBoolValue() (bool, error)` | Gets the boolean value |
 | `GetDateValue() (time.Time, error)` | Gets the date value |
+| `GetFormattedValue() string` | Gets the value formatted per number format |
+| `HasFormula() bool` | Returns true if cell has a formula |
+| `IsEmpty() bool` | Returns true if cell has no value or formula |
+| `IsNumber() bool` | Returns true if cell is numeric |
+| `IsBool() bool` | Returns true if cell is boolean |
+| `IsDate() bool` | Returns true if cell is a date |
+| `IsString() bool` | Returns true if cell is a string |
+| `IsError() bool` | Returns true if cell is an error |
 | `Row() int` | Returns the row index (0-based) |
 | `Col() int` | Returns the column index (0-based) |
 | `SetHyperlink(h *Hyperlink) *Cell` | Sets a hyperlink |
@@ -292,10 +356,13 @@ type Fill struct {
 
 ```go
 type Borders struct {
-    Left   Border
-    Right  Border
-    Top    Border
-    Bottom Border
+    Left     Border
+    Right    Border
+    Top      Border
+    Bottom   Border
+    Diagonal Border
+    DiagonalUp   bool
+    DiagonalDown bool
 }
 
 type Border struct {
@@ -323,6 +390,7 @@ type Alignment struct {
     Horizontal   HorizontalAlignment
     Vertical     VerticalAlignment
     WrapText     bool
+    ShrinkToFit  bool
     TextRotation int // -90 to 90 degrees
     Indent       int
 }
@@ -741,6 +809,33 @@ type FilterCondition struct {
 | `FilterOpGreaterOrEqual` | `"greaterThanOrEqual"` |
 | `FilterOpLessThan` | `"lessThan"` |
 | `FilterOpLessOrEqual` | `"lessThanOrEqual"` |
+
+---
+
+## Sheet View
+
+### SheetView
+
+```go
+type SheetView struct {
+    ZoomScale         uint   // zoom percentage (10-400), default 100
+    ShowGridlines     bool
+    ShowRowColHeaders bool
+    ShowRuler         bool
+    TopLeftCell       string // e.g. "A1"
+}
+```
+
+### SortOrder
+
+```go
+type SortOrder int
+
+const (
+    SortOrderAscending  SortOrder = 0
+    SortOrderDescending SortOrder = 1
+)
+```
 
 ---
 

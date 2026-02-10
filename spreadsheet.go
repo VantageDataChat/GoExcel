@@ -178,3 +178,145 @@ func (c *Cell) SetRichText(rt *RichText) *Cell {
 	}
 	return c
 }
+
+// Clear resets the cell to an empty state, removing value, formula, style, and annotations.
+func (c *Cell) Clear() *Cell {
+	c.Value = nil
+	c.Type = CellTypeEmpty
+	c.Formula = ""
+	c.Style = nil
+	c.Hyperlink = nil
+	c.Comment = nil
+	c.RichText = nil
+	return c
+}
+
+// HasFormula returns true if the cell contains a formula.
+func (c *Cell) HasFormula() bool {
+	return c.Type == CellTypeFormula && c.Formula != ""
+}
+
+// IsEmpty returns true if the cell has no value and no formula.
+func (c *Cell) IsEmpty() bool {
+	return c.Type == CellTypeEmpty && c.Value == nil && c.Formula == ""
+}
+
+// IsNumber returns true if the cell contains a numeric value.
+func (c *Cell) IsNumber() bool {
+	return c.Type == CellTypeNumeric
+}
+
+// IsBool returns true if the cell contains a boolean value.
+func (c *Cell) IsBool() bool {
+	return c.Type == CellTypeBool
+}
+
+// IsDate returns true if the cell contains a date value.
+func (c *Cell) IsDate() bool {
+	return c.Type == CellTypeDate
+}
+
+// IsString returns true if the cell contains a string value.
+func (c *Cell) IsString() bool {
+	return c.Type == CellTypeString
+}
+
+// IsError returns true if the cell contains an error value.
+func (c *Cell) IsError() bool {
+	return c.Type == CellTypeError
+}
+
+// SetDateWithStyle sets a date value and applies the default date number format.
+func (c *Cell) SetDateWithStyle(t time.Time) *Cell {
+	c.SetValue(t)
+	if c.Style == nil {
+		c.Style = NewStyle()
+	}
+	c.Style.NumberFormat = &FormatDate
+	return c
+}
+
+// SetNumberWithFormat sets a numeric value and applies a number format.
+func (c *Cell) SetNumberWithFormat(v float64, nf NumberFormat) *Cell {
+	c.SetValue(v)
+	if c.Style == nil {
+		c.Style = NewStyle()
+	}
+	c.Style.NumberFormat = &nf
+	return c
+}
+
+// SetFormulaArray sets an array formula (equivalent to Ctrl+Shift+Enter in Excel).
+func (c *Cell) SetFormulaArray(formula string) *Cell {
+	c.Formula = "{" + formula + "}"
+	c.Type = CellTypeFormula
+	return c
+}
+
+// SetInlineString sets the cell value as an inline string.
+// This is an alternative to shared strings for cells that have unique text.
+func (c *Cell) SetInlineString(s string) *Cell {
+	c.Value = s
+	c.Type = CellTypeString
+	return c
+}
+
+// GetFormattedValue returns the cell value formatted according to its number format.
+// If no number format is set, it returns the default string representation.
+func (c *Cell) GetFormattedValue() string {
+	if c.Style != nil && c.Style.NumberFormat != nil {
+		code := c.Style.NumberFormat.FormatCode
+		switch {
+		case c.Type == CellTypeDate:
+			if t, ok := c.Value.(time.Time); ok {
+				return formatDateByCode(t, code)
+			}
+		case c.Type == CellTypeNumeric:
+			if v, ok := c.Value.(float64); ok {
+				return formatNumberByCode(v, code)
+			}
+		}
+	}
+	return c.GetStringValue()
+}
+
+// formatDateByCode formats a time.Time according to a simple format code.
+func formatDateByCode(t time.Time, code string) string {
+	switch code {
+	case "yyyy-mm-dd":
+		return t.Format("2006-01-02")
+	case "yyyy-mm-dd hh:mm:ss":
+		return t.Format("2006-01-02 15:04:05")
+	case "hh:mm:ss":
+		return t.Format("15:04:05")
+	case "mm/dd/yyyy":
+		return t.Format("01/02/2006")
+	case "dd/mm/yyyy":
+		return t.Format("02/01/2006")
+	default:
+		return t.Format("2006-01-02 15:04:05")
+	}
+}
+
+// formatNumberByCode formats a float64 according to a simple format code.
+func formatNumberByCode(v float64, code string) string {
+	switch code {
+	case "General":
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%g", v)
+	case "0":
+		return fmt.Sprintf("%.0f", v)
+	case "0.00":
+		return fmt.Sprintf("%.2f", v)
+	case "0%":
+		return fmt.Sprintf("%.0f%%", v*100)
+	case "0.00%":
+		return fmt.Sprintf("%.2f%%", v*100)
+	case "@":
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%g", v)
+	}
+}
