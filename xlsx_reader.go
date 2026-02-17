@@ -319,21 +319,109 @@ func isDateFormatID(id int) bool {
 }
 
 // looksLikeDateFormat checks if a custom format code string contains
-// date/time tokens like y, m, d, h, s (but not if it's purely numeric).
+// date/time tokens like y, m, d, h, s. It strips quoted strings, escaped
+// characters, and bracketed color/locale codes before checking, so that
+// tokens inside literals (e.g. 0.00"mm") don't cause false positives.
 func looksLikeDateFormat(code string) bool {
-	lower := strings.ToLower(code)
-	// Skip formats that are clearly numeric/text
-	if lower == "general" || lower == "@" || lower == "0" || lower == "0.00" {
+	if code == "" {
 		return false
 	}
-	// Look for date/time tokens
-	for _, token := range []string{"yy", "mm", "dd", "hh", "ss", "am/pm", "a/p"} {
-		if strings.Contains(lower, token) {
-			return true
-		}
+	lower := strings.ToLower(code)
+	// Skip formats that are clearly numeric/text
+	if lower == "general" || lower == "@" {
+		return false
 	}
+
+	// Strip content between double quotes (literal strings)
+	cleaned := stripQuotedAndEscaped(lower)
+	// Strip bracketed sections like [Red], [$-409], [h], etc.
+	// but preserve [h] and [m] and [s] which are elapsed time tokens
+	cleaned = stripBracketedExceptElapsed(cleaned)
+
+	// Check for date/time tokens: y, m, d, h, s, am/pm, a/p
+	// Single-char tokens are valid in Excel (e.g. "d-mmm", "m/d/yyyy", "h:mm")
+	hasDate := strings.ContainsAny(cleaned, "yd")
+	hasTime := strings.ContainsAny(cleaned, "hs")
+	hasAMPM := strings.Contains(cleaned, "am/pm") || strings.Contains(cleaned, "a/p")
+
+	if hasDate || hasAMPM {
+		return true
+	}
+	// 'm' is ambiguous (months vs minutes). If 'h' or 's' is present,
+	// it's a time format. If 'm' appears alone, we need 'y' or 'd' to
+	// confirm it's a date — but those are already caught above.
+	// So 'm' alone with 'h' or 's' = time format.
+	if hasTime {
+		return true
+	}
+	// 'm' alone (no y, d, h, s) could be months in a month-only format,
+	// but that's extremely rare and ambiguous. We check for 'mmm' or longer
+	// which is unambiguously a month name format.
+	if strings.Contains(cleaned, "mmm") {
+		return true
+	}
+
 	return false
 }
+
+// stripQuotedAndEscaped removes quoted strings ("...") and escaped characters
+// (\x) from a format code so they don't interfere with token detection.
+func stripQuotedAndEscaped(code string) string {
+	var b strings.Builder
+	b.Grow(len(code))
+	i := 0
+	for i < len(code) {
+		switch code[i] {
+		case '"':
+			// Skip everything until closing quote
+			i++
+			for i < len(code) && code[i] != '"' {
+				i++
+			}
+			if i < len(code) {
+				i++ // skip closing quote
+			}
+		case '\\':
+			// Skip escaped character
+			i += 2
+		default:
+			b.WriteByte(code[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// stripBracketedExceptElapsed removes bracketed sections like [Red], [$-409],
+// [DBNum1] etc., but preserves elapsed time tokens [h], [m], [s], [hh], [mm], [ss].
+func stripBracketedExceptElapsed(code string) string {
+	var b strings.Builder
+	b.Grow(len(code))
+	i := 0
+	for i < len(code) {
+		if code[i] == '[' {
+			end := strings.IndexByte(code[i:], ']')
+			if end == -1 {
+				b.WriteByte(code[i])
+				i++
+				continue
+			}
+			inner := code[i+1 : i+end]
+			// Preserve elapsed time tokens
+			switch strings.ToLower(inner) {
+			case "h", "hh", "m", "mm", "s", "ss":
+				b.WriteString(inner)
+			}
+			// All other bracketed content is dropped (colors, locale, etc.)
+			i += end + 1
+		} else {
+			b.WriteByte(code[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
 
 func (r *XLSXReader) readCoreProperties(zr *zip.Reader, wb *Workbook) {
 	data, err := readZipFile(zr, "docProps/core.xml")
