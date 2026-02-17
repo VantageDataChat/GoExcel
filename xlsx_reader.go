@@ -61,6 +61,9 @@ func (r *XLSXReader) Read(reader io.ReaderAt, size int64) (*Workbook, error) {
 		return nil, fmt.Errorf("reading workbook rels: %w", err)
 	}
 
+	// Read styles to detect date-formatted cells
+	styleNumFmts := r.readStyles(zr)
+
 	// Read core properties
 	r.readCoreProperties(zr, wb)
 
@@ -74,7 +77,7 @@ func (r *XLSXReader) Read(reader io.ReaderAt, size int64) (*Workbook, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := r.readSheet(zr, ws, "xl/"+target, ss); err != nil {
+		if err := r.readSheet(zr, ws, "xl/"+target, ss, styleNumFmts); err != nil {
 			return nil, fmt.Errorf("reading sheet %q: %w", si.name, err)
 		}
 	}
@@ -86,6 +89,94 @@ type sheetInfo struct {
 	name string
 	rID  string
 }
+
+func (r *XLSXReader) readSheet(zr *zip.Reader, ws *Worksheet, path string, ss []string, styleNumFmts []int) error {
+	data, err := readZipFile(zr, path)
+	if err != nil {
+		return err
+	}
+
+	type xmlCellValue struct {
+		Value string `xml:",chardata"`
+	}
+	type xmlCell struct {
+		Ref     string       `xml:"r,attr"`
+		Type    string       `xml:"t,attr"`
+		Style   string       `xml:"s,attr"`
+		Value   xmlCellValue `xml:"v"`
+		Formula string       `xml:"f"`
+	}
+	type xmlRow struct {
+		R     string    `xml:"r,attr"`
+		Cells []xmlCell `xml:"c"`
+	}
+	type xmlMergeCell struct {
+		Ref string `xml:"ref,attr"`
+	}
+	type xmlSheetData struct {
+		Rows       []xmlRow       `xml:"sheetData>row"`
+		MergeCells []xmlMergeCell `xml:"mergeCells>mergeCell"`
+	}
+
+	var sheetData xmlSheetData
+	if err := xml.Unmarshal(data, &sheetData); err != nil {
+		return fmt.Errorf("parsing sheet xml: %w", err)
+	}
+
+	for _, row := range sheetData.Rows {
+		for _, c := range row.Cells {
+			cr, err := ParseCellReference(c.Ref)
+			if err != nil {
+				continue
+			}
+			cell := ws.GetCell(cr.Row-1, cr.ColumnIdx)
+
+			if c.Formula != "" {
+				cell.SetFormula(c.Formula)
+				continue
+			}
+
+			switch c.Type {
+			case "s": // shared string
+				idx, err := strconv.Atoi(c.Value.Value)
+				if err == nil && idx >= 0 && idx < len(ss) {
+					cell.SetValue(ss[idx])
+				}
+			case "b": // boolean
+				cell.SetValue(c.Value.Value == "1")
+			case "e": // error
+				cell.Value = c.Value.Value
+				cell.Type = CellTypeError
+			case "str": // inline string
+				cell.SetValue(c.Value.Value)
+			default: // number or date
+				if c.Value.Value != "" {
+					if v, err := strconv.ParseFloat(c.Value.Value, 64); err == nil {
+						// Check if the style indicates a date format
+						styleIdx, _ := strconv.Atoi(c.Style)
+						if styleIdx >= 0 && styleIdx < len(styleNumFmts) && isDateFormatID(styleNumFmts[styleIdx]) {
+							cell.SetValue(serialToDate(v))
+						} else {
+							cell.SetValue(v)
+						}
+					} else {
+						cell.SetValue(c.Value.Value)
+					}
+				}
+			}
+		}
+	}
+
+	// Read merge cells
+	for _, mc := range sheetData.MergeCells {
+		if err := ws.MergeCells(mc.Ref); err != nil {
+			continue // skip invalid merge ranges
+		}
+	}
+
+	return nil
+}
+
 
 func (r *XLSXReader) readWorkbookSheets(zr *zip.Reader) ([]sheetInfo, error) {
 	data, err := readZipFile(zr, "xl/workbook.xml")
@@ -169,85 +260,79 @@ func (r *XLSXReader) readSharedStrings(zr *zip.Reader) ([]string, error) {
 	return strings, nil
 }
 
-func (r *XLSXReader) readSheet(zr *zip.Reader, ws *Worksheet, path string, ss []string) error {
-	data, err := readZipFile(zr, path)
+// readStyles parses xl/styles.xml and returns a slice mapping each cellXf index
+// to its numFmtId. This allows the reader to detect date-formatted cells.
+func (r *XLSXReader) readStyles(zr *zip.Reader) []int {
+	data, err := readZipFile(zr, "xl/styles.xml")
 	if err != nil {
-		return err
+		return nil
 	}
 
-	type xmlCellValue struct {
-		Value string `xml:",chardata"`
+	type xmlNumFmt struct {
+		NumFmtID   int    `xml:"numFmtId,attr"`
+		FormatCode string `xml:"formatCode,attr"`
 	}
-	type xmlCell struct {
-		Ref     string       `xml:"r,attr"`
-		Type    string       `xml:"t,attr"`
-		Style   string       `xml:"s,attr"`
-		Value   xmlCellValue `xml:"v"`
-		Formula string       `xml:"f"`
+	type xmlXf struct {
+		NumFmtID int `xml:"numFmtId,attr"`
 	}
-	type xmlRow struct {
-		R     string    `xml:"r,attr"`
-		Cells []xmlCell `xml:"c"`
-	}
-	type xmlMergeCell struct {
-		Ref string `xml:"ref,attr"`
-	}
-	type xmlSheetData struct {
-		Rows       []xmlRow       `xml:"sheetData>row"`
-		MergeCells []xmlMergeCell `xml:"mergeCells>mergeCell"`
+	type xmlStyleSheet struct {
+		NumFmts []xmlNumFmt `xml:"numFmts>numFmt"`
+		CellXfs []xmlXf     `xml:"cellXfs>xf"`
 	}
 
-	var sheetData xmlSheetData
-	if err := xml.Unmarshal(data, &sheetData); err != nil {
-		return fmt.Errorf("parsing sheet xml: %w", err)
+	var ss xmlStyleSheet
+	if err := xml.Unmarshal(data, &ss); err != nil {
+		return nil
 	}
 
-	for _, row := range sheetData.Rows {
-		for _, c := range row.Cells {
-			cr, err := ParseCellReference(c.Ref)
-			if err != nil {
-				continue
-			}
-			cell := ws.GetCell(cr.Row-1, cr.ColumnIdx)
-
-			if c.Formula != "" {
-				cell.SetFormula(c.Formula)
-				continue
-			}
-
-			switch c.Type {
-			case "s": // shared string
-				idx, err := strconv.Atoi(c.Value.Value)
-				if err == nil && idx >= 0 && idx < len(ss) {
-					cell.SetValue(ss[idx])
-				}
-			case "b": // boolean
-				cell.SetValue(c.Value.Value == "1")
-			case "e": // error
-				cell.Value = c.Value.Value
-				cell.Type = CellTypeError
-			case "str": // inline string
-				cell.SetValue(c.Value.Value)
-			default: // number
-				if c.Value.Value != "" {
-					if v, err := strconv.ParseFloat(c.Value.Value, 64); err == nil {
-						cell.SetValue(v)
-					} else {
-						cell.SetValue(c.Value.Value)
-					}
-				}
-			}
+	// Build custom numFmt lookup for date detection
+	customDateFmts := make(map[int]bool)
+	for _, nf := range ss.NumFmts {
+		if looksLikeDateFormat(nf.FormatCode) {
+			customDateFmts[nf.NumFmtID] = true
 		}
 	}
 
-	// Read merge cells
-	for _, mc := range sheetData.MergeCells {
-		if err := ws.MergeCells(mc.Ref); err != nil {
-			continue // skip invalid merge ranges
+	// Store the numFmtId for each xf, also mark custom date formats
+	result := make([]int, len(ss.CellXfs))
+	for i, xf := range ss.CellXfs {
+		fmtID := xf.NumFmtID
+		// If it's a custom format that looks like a date, remap to a known date ID
+		// so isDateFormatID can catch it
+		if customDateFmts[fmtID] {
+			result[i] = 14 // treat as built-in date
+		} else {
+			result[i] = fmtID
 		}
 	}
+	return result
+}
 
-	return nil
+// isDateFormatID returns true if the given numFmtId corresponds to a
+// built-in Excel date/time format.
+// Built-in date format IDs: 14-22, 27-36, 45-47, 50-58.
+func isDateFormatID(id int) bool {
+	return (id >= 14 && id <= 22) ||
+		(id >= 27 && id <= 36) ||
+		(id >= 45 && id <= 47) ||
+		(id >= 50 && id <= 58)
+}
+
+// looksLikeDateFormat checks if a custom format code string contains
+// date/time tokens like y, m, d, h, s (but not if it's purely numeric).
+func looksLikeDateFormat(code string) bool {
+	lower := strings.ToLower(code)
+	// Skip formats that are clearly numeric/text
+	if lower == "general" || lower == "@" || lower == "0" || lower == "0.00" {
+		return false
+	}
+	// Look for date/time tokens
+	for _, token := range []string{"yy", "mm", "dd", "hh", "ss", "am/pm", "a/p"} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *XLSXReader) readCoreProperties(zr *zip.Reader, wb *Workbook) {
