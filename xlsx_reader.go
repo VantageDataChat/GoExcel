@@ -77,7 +77,7 @@ func (r *XLSXReader) Read(reader io.ReaderAt, size int64) (*Workbook, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := r.readSheet(zr, ws, "xl/"+target, ss, styleNumFmts); err != nil {
+		if err := r.readSheet(zr, ws, target, ss, styleNumFmts); err != nil {
 			return nil, fmt.Errorf("reading sheet %q: %w", si.name, err)
 		}
 	}
@@ -177,7 +177,6 @@ func (r *XLSXReader) readSheet(zr *zip.Reader, ws *Worksheet, path string, ss []
 	return nil
 }
 
-
 func (r *XLSXReader) readWorkbookSheets(zr *zip.Reader) ([]sheetInfo, error) {
 	data, err := readZipFile(zr, "xl/workbook.xml")
 	if err != nil {
@@ -226,9 +225,18 @@ func (r *XLSXReader) readWorkbookRels(zr *zip.Reader) (map[string]string, error)
 
 	relMap := make(map[string]string)
 	for _, rel := range rels.Rels {
-		relMap[rel.ID] = rel.Target
+		relMap[rel.ID] = workbookRelationshipTargetPath(rel.Target)
 	}
 	return relMap, nil
+}
+
+func workbookRelationshipTargetPath(target string) string {
+	target = strings.ReplaceAll(strings.TrimSpace(target), "\\", "/")
+	target = strings.TrimPrefix(target, "/")
+	if strings.HasPrefix(target, "xl/") {
+		return target
+	}
+	return "xl/" + target
 }
 
 func (r *XLSXReader) readSharedStrings(zr *zip.Reader) ([]string, error) {
@@ -421,7 +429,6 @@ func stripBracketedExceptElapsed(code string) string {
 	}
 	return b.String()
 }
-
 
 func (r *XLSXReader) readCoreProperties(zr *zip.Reader, wb *Workbook) {
 	data, err := readZipFile(zr, "docProps/core.xml")

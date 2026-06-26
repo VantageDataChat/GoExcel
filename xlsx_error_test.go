@@ -31,7 +31,7 @@ func TestXLSXReadMissingWorkbook(t *testing.T) {
 
 func TestXLSXReadInvalidWorkbookXML(t *testing.T) {
 	r := createTestZip(map[string]string{
-		"xl/workbook.xml":     "not valid xml <<<<",
+		"xl/workbook.xml":      "not valid xml <<<<",
 		"xl/sharedStrings.xml": `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
 	})
 	_, err := NewXLSXReader().Read(r, int64(r.Len()))
@@ -42,7 +42,7 @@ func TestXLSXReadInvalidWorkbookXML(t *testing.T) {
 
 func TestXLSXReadMissingWorkbookRels(t *testing.T) {
 	r := createTestZip(map[string]string{
-		"xl/workbook.xml": `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
+		"xl/workbook.xml":      `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
 		"xl/sharedStrings.xml": `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
 	})
 	_, err := NewXLSXReader().Read(r, int64(r.Len()))
@@ -53,9 +53,9 @@ func TestXLSXReadMissingWorkbookRels(t *testing.T) {
 
 func TestXLSXReadInvalidWorkbookRelsXML(t *testing.T) {
 	r := createTestZip(map[string]string{
-		"xl/workbook.xml":              `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
-		"xl/_rels/workbook.xml.rels":   "not valid xml <<<<",
-		"xl/sharedStrings.xml":         `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
+		"xl/workbook.xml":            `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": "not valid xml <<<<",
+		"xl/sharedStrings.xml":       `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
 	})
 	_, err := NewXLSXReader().Read(r, int64(r.Len()))
 	if err == nil {
@@ -65,9 +65,9 @@ func TestXLSXReadInvalidWorkbookRelsXML(t *testing.T) {
 
 func TestXLSXReadInvalidSharedStringsXML(t *testing.T) {
 	r := createTestZip(map[string]string{
-		"xl/workbook.xml":              `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets></sheets></workbook>`,
-		"xl/_rels/workbook.xml.rels":   `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`,
-		"xl/sharedStrings.xml":         "not valid xml <<<<",
+		"xl/workbook.xml":            `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`,
+		"xl/sharedStrings.xml":       "not valid xml <<<<",
 	})
 	_, err := NewXLSXReader().Read(r, int64(r.Len()))
 	if err == nil {
@@ -91,14 +91,46 @@ func TestXLSXReadMissingSheetFile(t *testing.T) {
 
 func TestXLSXReadInvalidSheetXML(t *testing.T) {
 	r := createTestZip(map[string]string{
-		"xl/workbook.xml":              `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
-		"xl/_rels/workbook.xml.rels":   `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
-		"xl/sharedStrings.xml":         `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
-		"xl/worksheets/sheet1.xml":     "not valid xml <<<<",
+		"xl/workbook.xml":            `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+		"xl/sharedStrings.xml":       `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
+		"xl/worksheets/sheet1.xml":   "not valid xml <<<<",
 	})
 	_, err := NewXLSXReader().Read(r, int64(r.Len()))
 	if err == nil {
 		t.Error("expected error for invalid sheet XML")
+	}
+}
+
+func TestXLSXReadWorkbookRelationshipTargetPathForms(t *testing.T) {
+	for _, target := range []string{
+		"worksheets/sheet1.xml",
+		"/xl/worksheets/sheet1.xml",
+		"xl/worksheets/sheet1.xml",
+	} {
+		t.Run(target, func(t *testing.T) {
+			r := createTestZip(map[string]string{
+				"xl/workbook.xml":            `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="说明" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
+				"xl/_rels/workbook.xml.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="` + target + `"/></Relationships>`,
+				"xl/sharedStrings.xml":       `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></sst>`,
+				"xl/worksheets/sheet1.xml":   `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>`,
+			})
+			wb, err := NewXLSXReader().Read(r, int64(r.Len()))
+			if err != nil {
+				t.Fatalf("Read returned error: %v", err)
+			}
+			if names := wb.GetSheetNames(); len(names) != 1 || names[0] != "说明" {
+				t.Fatalf("sheet names = %v, want [说明]", names)
+			}
+			ws := wb.GetActiveSheet()
+			v, err := ws.GetCellValue("A1")
+			if err != nil {
+				t.Fatalf("GetCellValue returned error: %v", err)
+			}
+			if v != 42.0 {
+				t.Fatalf("A1 = %#v, want 42", v)
+			}
+		})
 	}
 }
 
